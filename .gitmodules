@@ -1,0 +1,3 @@
+[submodule "auto-editor"]
+	path = auto-editor
+	url = https://github.com/WyattBlue/auto-editor.git
