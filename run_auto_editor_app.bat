@@ -1,20 +1,102 @@
 @echo off
+setlocal EnableDelayedExpansion
 echo Auto-Editor Streamlit App Launcher
 echo ===============================
 echo.
 
-:: Check Python
+:: Define virtual environment path
+set VENV_DIR=venv
+
+:: Check Python installation
+set PYTHON_INSTALLED=0
 where python >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    for /f "tokens=*" %%i in ('python -c "import sys; print(sys.version.split()[0])"') do set PYTHON_VERSION=%%i
+    echo Found Python version !PYTHON_VERSION!
+    set PYTHON_INSTALLED=1
+    
+    :: Check Python version (we need at least 3.8)
+    for /f "tokens=1,2 delims=." %%a in ("!PYTHON_VERSION!") do (
+        set MAJOR=%%a
+        set MINOR=%%b
+    )
+    
+    if !MAJOR! LSS 3 (
+        echo WARNING: Python version !PYTHON_VERSION! is too old.
+        set PYTHON_INSTALLED=0
+    ) else if !MAJOR! EQU 3 if !MINOR! LSS 8 (
+        echo WARNING: Python version !PYTHON_VERSION! is too old.
+        set PYTHON_INSTALLED=0
+    )
+)
+
+if !PYTHON_INSTALLED! EQU 0 (
+    echo Python 3.8+ not found. Installing Python 3.10.11...
+    
+    :: Create temp directory for downloads
+    if not exist "temp" mkdir temp
+    cd temp
+    
+    :: Download Python installer
+    echo Downloading Python 3.10.11 installer...
+    powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe' -OutFile 'python-3.10.11-amd64.exe'}"
+    
+    if not exist "python-3.10.11-amd64.exe" (
+        echo ERROR: Failed to download Python installer.
+        cd ..
+        pause
+        exit /b 1
+    )
+    
+    :: Install Python with necessary options
+    echo Installing Python 3.10.11...
+    start /wait python-3.10.11-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
+    
+    :: Clean up installer
+    del python-3.10.11-amd64.exe
+    cd ..
+    
+    :: Refresh environment variables to include new Python
+    echo Refreshing environment variables...
+    call :RefreshEnv
+    
+    :: Verify Python installation
+    where python >nul 2>nul
+    if %ERRORLEVEL% neq 0 (
+        echo ERROR: Python installation failed or Python is not in PATH.
+        echo Please install Python 3.10.11 manually and ensure it's added to your PATH.
+        pause
+        exit /b 1
+    )
+    
+    echo Python 3.10.11 installed successfully.
+)
+
+:: Check for and create virtual environment if not exists
+if not exist "%VENV_DIR%\Scripts\activate.bat" (
+    echo Creating virtual environment in %VENV_DIR%...
+    python -m venv %VENV_DIR%
+    if %ERRORLEVEL% neq 0 (
+        echo ERROR: Failed to create virtual environment.
+        echo Make sure the venv module is available.
+        pause
+        exit /b 1
+    )
+)
+
+:: Activate virtual environment
+echo Activating virtual environment...
+call %VENV_DIR%\Scripts\activate.bat
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: Python is not installed or not in PATH.
-    echo Please install Python and try again.
+    echo ERROR: Failed to activate virtual environment.
     pause
     exit /b 1
 )
+echo Virtual environment activated.
 
 :: Check if we need to install dependencies
 if not exist "setup_done.txt" (
-    echo First-time setup: Installing required packages...
+    echo First-time setup: Installing required packages in virtual environment...
     
     echo - Upgrading pip...
     python -m pip install --upgrade pip
@@ -113,7 +195,7 @@ if not exist "setup_done.txt" (
         )
     )
     
-    echo Installing Auto-Editor...
+    echo Installing Auto-Editor into virtual environment...
     python -m pip install -e ./auto-editor
     if %ERRORLEVEL% neq 0 (
         echo ERROR: Failed to install Auto-Editor.
@@ -121,6 +203,10 @@ if not exist "setup_done.txt" (
         pause
         exit /b 1
     )
+    
+    :: Create requirements.txt
+    echo Creating requirements.txt with installed packages...
+    python -m pip freeze > requirements.txt
     
     echo Setup completed successfully.
     echo 1 > setup_done.txt
@@ -135,4 +221,28 @@ echo.
 :: start http://localhost:8501
 python -m streamlit run app.py
 
+:: Deactivate venv when done
+echo Deactivating virtual environment...
+call %VENV_DIR%\Scripts\deactivate.bat
+
 pause
+
+:: Function to refresh environment variables without restarting the script
+:RefreshEnv
+echo @echo off>"%TEMP%\_env.cmd"
+call :_GetRegEnv HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment >> "%TEMP%\_env.cmd"
+call :_GetRegEnv HKCU\Environment >> "%TEMP%\_env.cmd"
+for /f "delims=" %%A in ('type "%TEMP%\_env.cmd"') do set %%A
+del /f /q "%TEMP%\_env.cmd"
+goto :eof
+
+:_GetRegEnv RegPath
+for /f "tokens=1,2*" %%A in ('reg query "%~1" /ve 2^>nul') do (
+    if "%%A"=="REG_EXPAND_SZ" echo %%C
+    if "%%A"=="REG_SZ" echo %%C
+)
+for /f "tokens=1,2*" %%A in ('reg query "%~1" 2^>nul') do (
+    if "%%A"=="REG_EXPAND_SZ" echo %%C
+    if "%%A"=="REG_SZ" echo %%C
+)
+goto :eof
