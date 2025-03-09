@@ -1,14 +1,2 @@
-[theme]
-primaryColor = "#5B8C5A"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F4F4"
-textColor = "#212121"
-font = "sans serif"
-
 [server]
-maxUploadSize = 2000
-enableCORS = false
-enableXsrfProtection = true
-
-[deprecation]
-showPyplotGlobalUse = false
+maxUploadSize = 5000
