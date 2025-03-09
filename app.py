@@ -6,15 +6,164 @@ import tempfile
 import shutil
 from pathlib import Path
 import re
+import json
+import datetime
+import atexit
 
-# 세션 종료 시 임시 디렉토리 정리 함수
-def cleanup_temp_dirs():
-    if "temp_directories" in st.session_state:
-        for temp_dir in st.session_state.temp_directories:
+# Constants for temp directory tracking
+TEMP_DIR_TRACKER_FILE = "temp_dir_tracker.json"
+MAX_TEMP_DIR_AGE_HOURS = 24  # Clean up directories older than this
+
+# Function to load the list of tracked temporary directories
+def load_temp_dirs():
+    try:
+        if os.path.exists(TEMP_DIR_TRACKER_FILE):
+            with open(TEMP_DIR_TRACKER_FILE, 'r') as f:
+                return json.load(f)
+        return {}
+    except Exception:
+        return {}
+
+# Function to save the list of tracked temporary directories
+def save_temp_dirs(temp_dirs_dict):
+    try:
+        with open(TEMP_DIR_TRACKER_FILE, 'w') as f:
+            json.dump(temp_dirs_dict, f)
+    except Exception:
+        pass
+
+# Function to track a temporary directory
+def track_temp_dir(temp_dir):
+    temp_dirs = load_temp_dirs()
+    temp_dirs[temp_dir] = datetime.datetime.now().isoformat()
+    save_temp_dirs(temp_dirs)
+    
+    # Also add to session state for current session
+    if "temp_directories" not in st.session_state:
+        st.session_state.temp_directories = []
+    if temp_dir not in st.session_state.temp_directories:
+        st.session_state.temp_directories.append(temp_dir)
+
+# Function to remove a temporary directory from tracking
+def untrack_temp_dir(temp_dir):
+    temp_dirs = load_temp_dirs()
+    if temp_dir in temp_dirs:
+        del temp_dirs[temp_dir]
+    save_temp_dirs(temp_dirs)
+    
+    # Also remove from session state if it exists
+    if "temp_directories" in st.session_state and temp_dir in st.session_state.temp_directories:
+        st.session_state.temp_directories.remove(temp_dir)
+
+# Function to clean up a temporary directory
+def cleanup_temp_dir(temp_dir):
+    try:
+        if os.path.exists(temp_dir):
+            # Try different cleanup methods
             try:
+                # First attempt with standard method
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except:
                 pass
+            
+            # If directory still exists, try with OS-specific commands
+            if os.path.exists(temp_dir):
+                if os.name == 'nt':  # Windows
+                    try:
+                        os.system(f'rd /s /q "{temp_dir}"')
+                    except:
+                        pass
+                else:  # Unix/Linux/Mac
+                    try:
+                        os.system(f'rm -rf "{temp_dir}"')
+                    except:
+                        pass
+        
+        # Remove from tracking
+        untrack_temp_dir(temp_dir)
+        
+        # Success if directory no longer exists
+        return not os.path.exists(temp_dir)
+    except Exception:
+        return False
+
+# Function to clean up old temporary directories
+def cleanup_old_temp_dirs():
+    # First clean tracked directories
+    temp_dirs = load_temp_dirs()
+    now = datetime.datetime.now()
+    success_count = 0
+    
+    for temp_dir, created_at_str in list(temp_dirs.items()):
+        try:
+            created_at = datetime.datetime.fromisoformat(created_at_str)
+            age_hours = (now - created_at).total_seconds() / 3600
+            
+            if age_hours > MAX_TEMP_DIR_AGE_HOURS:
+                if cleanup_temp_dir(temp_dir):
+                    success_count += 1
+        except Exception:
+            # If we can't parse the date, try to clean up anyway
+            if cleanup_temp_dir(temp_dir):
+                success_count += 1
+    
+    # Now search for and clean up any untracked temporary directories
+    try:
+        # Get system temp directory
+        system_temp = tempfile.gettempdir()
+        
+        # Look for directories that match our pattern
+        for item in os.listdir(system_temp):
+            item_path = os.path.join(system_temp, item)
+            
+            # Check if it's a directory and has our typical temp pattern (starts with 'tmp')
+            if os.path.isdir(item_path) and item.startswith('tmp'):
+                # Check if it's old enough (older than 3 hours)
+                item_age_hours = (now - datetime.datetime.fromtimestamp(os.path.getctime(item_path))).total_seconds() / 3600
+                if item_age_hours > 3:  # More aggressive than MAX_TEMP_DIR_AGE_HOURS for untracked dirs
+                    if cleanup_temp_dir(item_path):
+                        success_count += 1
+    except Exception:
+        # If we encounter an error scanning the system temp dir, just continue
+        pass
+    
+    return success_count
+
+# Register cleanup function to run when Python exits
+@atexit.register
+def cleanup_on_exit():
+    # Clean tracked directories in session state
+    if "temp_directories" in st.session_state:
+        for temp_dir in list(st.session_state.temp_directories):
+            cleanup_temp_dir(temp_dir)
+    
+    # Also clean up any tmp directories in the system temp folder
+    try:
+        system_temp = tempfile.gettempdir()
+        for item in os.listdir(system_temp):
+            item_path = os.path.join(system_temp, item)
+            if os.path.isdir(item_path) and item.startswith('tmp'):
+                try:
+                    shutil.rmtree(item_path, ignore_errors=True)
+                    # If still exists, try OS-specific command
+                    if os.path.exists(item_path):
+                        if os.name == 'nt':  # Windows
+                            os.system(f'rd /s /q "{item_path}"')
+                        else:
+                            os.system(f'rm -rf "{item_path}"')
+                except:
+                    pass
+    except:
+        pass
+
+# Run cleanup of old temp dirs on startup
+startup_cleanup_count = cleanup_old_temp_dirs()
+
+# 세션 종료 시 임시 디렉토리 정리 함수 - 이제 atexit을 통해 관리
+def cleanup_temp_dirs():
+    if "temp_directories" in st.session_state:
+        for temp_dir in list(st.session_state.temp_directories):
+            cleanup_temp_dir(temp_dir)
 
 # 임시 디렉토리 목록 초기화
 if "temp_directories" not in st.session_state:
@@ -66,7 +215,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 헤더 표시
-st.markdown('<p class="main-header">Auto-Editor Web</p>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">Auto-Editor Web</h1>', unsafe_allow_html=True)
+st.markdown(" ")
 st.markdown("동영상에서 무음 부분을 자동으로 제거하거나 속도를 조절하세요.")
 
 # 세션 상태 초기화
@@ -195,8 +345,8 @@ with upload_col:
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, original_file_name)
         
-        # 임시 디렉토리 추적을 위해 세션 상태에 저장
-        st.session_state.temp_directories.append(temp_dir)
+        # 임시 디렉토리 추적을 위해 세션 상태에 저장 및 영구 저장
+        track_temp_dir(temp_dir)
         
         # 프로젝트 파일용 미디어 파일 경로 - 출력 폴더에 저장
         media_output_path = os.path.join(output_dir, original_file_name)
@@ -417,14 +567,9 @@ with upload_col:
                                 log_line.text(f"프로젝트 파일 경로 수정 중 오류 발생: {str(e)}")
                     
                     # 임시 파일 정리
-                    for temp_dir in st.session_state.temp_directories:
-                        try:
-                            shutil.rmtree(temp_dir, ignore_errors=True)
-                        except Exception as e:
-                            log_line.text(f"임시 파일 정리 중 오류 발생: {str(e)}")
-                    
-                    # 임시 파일 목록 초기화
-                    st.session_state.temp_directories = []
+                    for temp_dir in list(st.session_state.temp_directories):
+                        if cleanup_temp_dir(temp_dir):
+                            log_line.text(f"임시 디렉토리 정리: {temp_dir}")
                     
                     # 처리 완료 메시지만 표시
                     st.success("""
@@ -434,7 +579,7 @@ with upload_col:
                     """)
                     
                     # 경로 표시
-                    if project_folder:
+                    if export_format != "MP4 파일" and project_folder:
                         final_output_dir = project_folder
                     else:
                         final_output_dir = output_dir
@@ -475,31 +620,31 @@ with result_col:
     else:
         st.info("비디오를 업로드하고 처리를 시작하면 여기에 결과가 표시됩니다.")
 
-# 임시 파일 정리 기능 추가
+# 임시 파일 정리 등 시스템 알림 영역 추가
 with st.sidebar:
     st.divider()
-    st.markdown("### 디스크 공간 관리")
+    st.markdown("### 시스템 알림")
     
-    if st.button("임시 파일 정리"):
-        cleanup_count = 0
-        for temp_dir in st.session_state.temp_directories:
-            try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                cleanup_count += 1
-            except:
-                pass
-        
-        # 리스트 초기화
-        st.session_state.temp_directories = []
-        
-        if cleanup_count > 0:
-            st.success(f"{cleanup_count}개의 임시 디렉토리를 정리했습니다.")
-        else:
-            st.info("정리할 임시 파일이 없습니다.")
+    # 시작 시 정리된 임시 파일이 있으면 알림
+    if startup_cleanup_count > 0:
+        st.info(f"시작 시 {startup_cleanup_count}개의 오래된 임시 파일을 자동으로 정리했습니다.")
 
-# 푸터
 st.markdown("---")
-st.markdown("Auto-Editor Web은 [Auto-Editor](https://github.com/WyattBlue/auto-editor)의 GUI 인터페이스입니다.")
+# 푸터 컨테이너 생성
+footer = st.container()
 
-# 영어 버전 전환 버튼 (미구현)
-# language_toggle = st.checkbox("Switch to English", value=False)
+with footer:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 10px;">
+                <p style="font-size: 0.9em; color: #666;">
+                    Auto-Editor Web은 <a href="https://github.com/WyattBlue/auto-editor" target="_blank" style="color: #4B9CFF; text-decoration: none;">Auto-Editor</a>의 GUI 인터페이스 Wrapper 앱입니다.<br>
+                    이 프로그램은 <a href="https://metamind.kr" target="_blank" style="color: #4B9CFF; text-decoration: none;">메타마인드</a>가 제작하였으며, 자유로운 수정 및 공유가 가능합니다.
+                </p>
+                <p style="font-size: 0.8em; color: #888;">© 2025 메타마인드</p>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )

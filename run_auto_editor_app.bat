@@ -204,10 +204,6 @@ if not exist "setup_done.txt" (
         exit /b 1
     )
     
-    :: Create requirements.txt
-    echo Creating requirements.txt with installed packages...
-    python -m pip freeze > requirements.txt
-    
     echo Setup completed successfully.
     echo 1 > setup_done.txt
 )
