@@ -4,6 +4,10 @@
 
 **Auto-Editor Web**은 [Auto-Editor](https://github.com/WyattBlue/auto-editor)를 직관적인 웹 인터페이스로 사용할 수 있게 해주는 애플리케이션입니다. 단순한 클릭 몇 번으로 동영상의 무음 부분을 자동으로 제거하거나 속도를 조절할 수 있습니다.
 
+## YouTube
+
+[![자동 컷편집 AI 설치 및 사용법 유튜브 영상](https://img.youtube.com/vi/ypipYB8xpMc/mqdefault.jpg)](https://youtu.be/ypipYB8xpMc)
+
 ## 주요 기능
 
 - **직관적인 웹 인터페이스**: 명령 프롬프트 지식이 없이도 쉽게 사용 가능
