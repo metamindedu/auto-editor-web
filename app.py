@@ -55,6 +55,23 @@ def untrack_temp_dir(temp_dir):
     if "temp_directories" in st.session_state and temp_dir in st.session_state.temp_directories:
         st.session_state.temp_directories.remove(temp_dir)
 
+def get_all_tracked_uploads():
+    uploads = []
+    # temp_dir_tracker.json에 기록된 모든 임시 디렉토리 읽기
+    temp_dirs = load_temp_dirs()  # 예: {temp_dir: timestamp, ...}
+    for temp_dir, ts in temp_dirs.items():
+        if os.path.exists(temp_dir):
+            # 해당 디렉토리 내의 파일들을 순회
+            for file in os.listdir(temp_dir):
+                if file.lower().endswith((".mp4", ".mov", ".avi", ".mkv", ".webm")):
+                    file_path = os.path.join(temp_dir, file)
+                    uploads.append((file, file_path))
+        else:
+            # 존재하지 않는 디렉토리는 추적 목록에서 제거
+            untrack_temp_dir(temp_dir)
+    return uploads
+
+
 # Function to clean up a temporary directory
 def cleanup_temp_dir(temp_dir):
     try:
@@ -120,7 +137,7 @@ def cleanup_old_temp_dirs():
             if os.path.isdir(item_path) and item.startswith('tmp'):
                 # Check if it's old enough (older than 3 hours)
                 item_age_hours = (now - datetime.datetime.fromtimestamp(os.path.getctime(item_path))).total_seconds() / 3600
-                if item_age_hours > 3:  # More aggressive than MAX_TEMP_DIR_AGE_HOURS for untracked dirs
+                if item_age_hours > MAX_TEMP_DIR_AGE_HOURS:
                     if cleanup_temp_dir(item_path):
                         success_count += 1
     except Exception:
@@ -238,6 +255,39 @@ os.makedirs(output_dir, exist_ok=True)
 
 # 사이드바 - 설정 옵션
 with st.sidebar:
+    with st.sidebar.expander("최근 영상 업로드 내역", expanded=False):
+        uploads = get_all_tracked_uploads()  # temp_dir_tracker.json 기반 실제 파일 존재 여부 확인
+        if uploads:
+            # 파일명만 옵션으로 표시
+            options = [name for name, path in uploads]
+            selected_name = st.selectbox("업로드된 영상 선택", options, key="recent_video")
+            # 선택된 항목의 파일 경로 저장 및 미리보기
+            for name, file_path in uploads:
+                if name == selected_name:
+                    st.session_state.selected_upload_path = file_path
+                    st.info(f"선택된 영상: {file_path}")
+                    st.video(file_path)
+                    break
+        else:
+            st.info("최근 업로드된 영상이 없습니다.")
+
+        if st.button("목록 초기화", help="임시파일을 삭제하여 디스크 공간을 확보할 수 있습니다."):
+            # 모든 임시 디렉토리 삭제
+            temp_dirs = list(load_temp_dirs().keys())
+            for temp_dir in temp_dirs:
+                cleanup_temp_dir(temp_dir)
+            
+            # 더 이상 유효하지 않은 세션 변수 초기화
+            st.session_state.original_path = None
+            st.session_state.selected_upload_path = None
+
+            st.success("임시 파일 목록이 초기화되었습니다.")
+            
+            # 화면을 새로고침하여, 이미 사라진 파일 경로를 다시 표시하지 않도록 함
+            st.rerun()
+
+        st.markdown(f"※ 디스크 공간 절약을 위하여, {MAX_TEMP_DIR_AGE_HOURS}시간 동안만 유지됩니다.")
+
     st.header("편집 설정")
 
     # 편집 방식 선택
@@ -331,42 +381,51 @@ with st.sidebar:
 # 메인 영역 - 파일 업로드 및 처리
 upload_col, result_col = st.columns(2)
 final_output_dir = ''
+temp_path = None
 with upload_col:
     st.markdown('<p class="sub-header">원본 비디오</p>', unsafe_allow_html=True)
     
     uploaded_file = st.file_uploader("비디오 파일을 업로드하세요", type=["mp4", "mov", "avi", "mkv", "webm"])
     
-    if uploaded_file is not None:
-        # 업로드된 파일 저장
-        original_file_name = uploaded_file.name
-        file_extension = os.path.splitext(original_file_name)[1]
-        
-        # 임시 파일 및 output 폴더의 영구 파일 경로 설정
-        temp_dir = tempfile.mkdtemp()
-        temp_path = os.path.join(temp_dir, original_file_name)
-        
-        # 임시 디렉토리 추적을 위해 세션 상태에 저장 및 영구 저장
-        track_temp_dir(temp_dir)
-        
-        # 프로젝트 파일용 미디어 파일 경로 - 출력 폴더에 저장
-        media_output_path = os.path.join(output_dir, original_file_name)
-        
-        # 파일 임시 저장
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        st.session_state.original_path = temp_path
-        
-        # 비디오 플레이어 표시
-        st.video(temp_path)
-        
+    # 만약 새 파일이 업로드되지 않았고, 최근 업로드 내역에서 선택한 파일이 있다면
+    if uploaded_file is None and st.session_state.get("selected_upload_path"):
+        st.session_state.original_path = st.session_state.selected_upload_path
+        st.video(st.session_state.original_path)
+        original_file_name = os.path.basename(st.session_state.original_path)
+        temp_path = st.session_state.original_path
+    else:
+        if uploaded_file is not None:
+            # 업로드된 파일 저장
+            original_file_name = uploaded_file.name
+            file_extension = os.path.splitext(original_file_name)[1]
+            
+            # 임시 파일 및 output 폴더의 영구 파일 경로 설정
+            temp_dir = tempfile.mkdtemp()
+            temp_path = os.path.join(temp_dir, original_file_name)
+            
+            # 임시 디렉토리 추적을 위해 세션 상태에 저장 및 영구 저장
+            track_temp_dir(temp_dir)
+            
+            # 프로젝트 파일용 미디어 파일 경로 - 출력 폴더에 저장
+            media_output_path = os.path.join(output_dir, original_file_name)
+            
+            # 파일 임시 저장
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            st.session_state.original_path = temp_path
+            
+            # 비디오 플레이어 표시
+            st.video(temp_path)
+    
+    if temp_path:
         # 파일 정보 표시
         file_size_mb = os.path.getsize(temp_path) / (1024 * 1024)
         st.info(f"파일 이름: {original_file_name}\n\n파일 크기: {file_size_mb:.2f} MB")
-        
-        # 처리 버튼
+
+    if st.session_state.get("original_path"):
         process_button = st.button("작업 시작")
-        
+    
         if process_button:
             # 프로젝트 내보내기 시 원본 경로가 필요
             if export_format != "MP4 파일" and not original_file_path:
@@ -387,7 +446,7 @@ with upload_col:
                     output_path_without_ext = os.path.join(output_dir, safe_filename + "_edited")
                     st.session_state.output_file_type = "video"
                 else:
-                    # 프로젝트 파일 내보내기 설정
+                    # 프로젝트 파일 내보내기 설정 (원본 파일 경로 필수)
                     if export_format == "Adobe Premiere Pro":
                         export_type = "premiere"
                         project_ext = ".xml"
@@ -567,9 +626,9 @@ with upload_col:
                                 log_line.text(f"프로젝트 파일 경로 수정 중 오류 발생: {str(e)}")
                     
                     # 임시 파일 정리
-                    for temp_dir in list(st.session_state.temp_directories):
-                        if cleanup_temp_dir(temp_dir):
-                            log_line.text(f"임시 디렉토리 정리: {temp_dir}")
+                    # for temp_dir in list(st.session_state.temp_directories):
+                    #     if cleanup_temp_dir(temp_dir):
+                    #         log_line.text(f"임시 디렉토리 정리: {temp_dir}")
                     
                     # 처리 완료 메시지만 표시
                     st.success("""
@@ -577,6 +636,11 @@ with upload_col:
                     
                     output 폴더 또는 원본 파일 경로(입력한 경우)에서 결과 파일을 확인하세요.
                     """)
+
+                    # if export_format == "MP4 파일":
+                    #     # 임시 파일 삭제
+                    #     if cleanup_temp_dir(temp_dir):
+                    #         log_line.text(f"임시 파일 삭제: {temp_path}")
                     
                     # 경로 표시
                     if export_format != "MP4 파일" and project_folder:
