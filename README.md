@@ -33,7 +33,7 @@
 
 ```bash
 # 저장소 클론
-git clone https://github.com/yourusername/auto-editor-web.git
+git clone https://github.com/metamindedu/auto-editor-web.git
 cd auto-editor-web
 
 # Auto-Editor 소스 가져오기
