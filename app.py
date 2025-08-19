@@ -62,7 +62,7 @@ def is_audio_file(file_path):
     file_ext = file_ext.lower()
     
     # WAV 파일만 오디오 파일로 인식
-    audio_extensions = ['.wav']
+    audio_extensions = ['.wav', '.mp3']
     return file_ext in audio_extensions
 
 # Handle file upload and state changes
@@ -113,7 +113,7 @@ def get_all_tracked_uploads():
         if os.path.exists(temp_dir):
             # 해당 디렉토리 내의 파일들을 순회
             for file in os.listdir(temp_dir):
-                if file.lower().endswith((".mp4", ".mov", ".avi", ".mkv", ".webm", ".wav")):
+                if file.lower().endswith((".mp4", ".mov", ".avi", ".mkv", ".webm", ".wav", ".mp3")):
                     file_path = os.path.join(temp_dir, file)
                     uploads.append((file, file_path))
         else:
@@ -478,7 +478,7 @@ with upload_col:
     
     # 비디오 및 오디오 파일 업로더
     uploaded_file = st.file_uploader("파일을 업로드하세요", 
-                                    type=["mp4", "mov", "avi", "mkv", "webm", "wav"])
+                                    type=["mp4", "mov", "avi", "mkv", "webm", "wav", "mp3"])
     
     # 파일 업로드 처리
     if uploaded_file is not None and (st.session_state.original_file_name != uploaded_file.name):
@@ -552,7 +552,7 @@ with upload_col:
                 if export_format == "MP4 파일":
                     st.session_state.output_file_type = "video"
                 elif export_format == "WAV 파일":
-                    export_option = "--export audio --output-format wav"
+                    export_option = "--export default --output-format wav"
                     st.session_state.output_file_type = "audio"
                 else:
                     # 프로젝트 파일 내보내기 설정 (원본 파일 경로 필수)

@@ -196,7 +196,7 @@ if not exist "setup_done.txt" (
     )
     
     echo Installing Auto-Editor into virtual environment...
-    python -m pip install -e ./auto-editor
+    python -m pip install auto-editor==28.1.0
     if %ERRORLEVEL% neq 0 (
         echo ERROR: Failed to install Auto-Editor.
         echo Please make sure the auto-editor directory exists and is complete.
